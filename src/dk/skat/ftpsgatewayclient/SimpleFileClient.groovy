@@ -1,4 +1,4 @@
-package dk.skat.ftpsgatewayclient
+package dk.skat.ftpsgateway
 
 
 import java.security.KeyStore;
@@ -6,6 +6,7 @@ import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 
 import org.apache.commons.net.PrintCommandListener;
+import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPConnectionClosedException;
 import org.apache.commons.net.ftp.FTPSClient;
 import org.apache.commons.net.ftp.FTPReply;
@@ -15,12 +16,15 @@ import org.codehaus.groovy.syntax.ReadException;
 
 class SimpleFileClient {
 	
-	FTPSClient ftp = new FTPSClient()
+	FTPClient ftp
 	
-	
-	
+	public SimpleFileClient() {
+		ftp = new FTPClient()		
+		ftp.addProtocolCommandListener(new PrintCommandListener(new PrintWriter(System.out)));
+	}
 	
 	public SimpleFileClient(keyManager) {
+		ftp = new FTPSClient()
 		ftp.setKeyManager keyManager
 		ftp.addProtocolCommandListener(new PrintCommandListener(new PrintWriter(System.out)));		
 	}
@@ -77,20 +81,33 @@ class SimpleFileClient {
 		return ftp
 	}
 	
-	def uploadFiles(dir, files){		
+	def uploadFiles(dir, files){
+		ftp.changeWorkingDirectory(dir)
 		files.each{
 			def f = new File(it)
 			ftp.storeFile(f.getName(), new FileInputStream(f))
 		}
 	}
 	
-	def pollForResponses(remoteDir, files){
+	def pollForResponses(remoteDir, fileName){
 		ftp.changeToParentDirectory()
 		ftp.changeToParentDirectory()
+		println "PWD: " + ftp.printWorkingDirectory()
+		println "Dirs: " + ftp.listNames()
 		ftp.changeWorkingDirectory("out")
-				
-		ftp.listNames().each{ println it }
 		
+		while(fileName != null){
+			ftp.listNames().each{ fName ->
+				String targetName = remoteDir + "_" + fileName + ".response"
+				println "fName $fName - targetName $targetName"
+				if(fName == targetName){
+					println "Downloading!"
+					ftp.retrieveFile(fName, new FileOutputStream(fName))
+					fileName = null
+				} 
+			}
+			Thread.sleep(5000)
+		}
 	}
 	
 
@@ -99,7 +116,7 @@ class SimpleFileClient {
 		// Create the list of options.
 		cli.with {
 			h longOpt: 'help', 'Show usage information'			
-			c required: true, longOpt: 'cert', args: 1, argName: 'certFile', 'Path to the pkcs12 with the client cert'
+			c required: false, longOpt: 'cert', args: 1, argName: 'certFile', 'Path to the pkcs12 with the client cert'
 			s required: true, longOpt: 'server', args: 1, argName: 'host', 'The hostname or ip of the server'
 			p required: true, longOpt: 'port' , args: 1, argName: 'port', 'The port of the server'
 			d required: true, longOpt: 'directory' , args: 1, argName: 'dir', 'The directory to upload to'			
@@ -116,25 +133,33 @@ class SimpleFileClient {
 			return
 		}
 		
-		println "Please input password for ${options.c}"
-		KeyManager km = null
-		try{
-			System.in.eachLine{ line ->			
-				km = initKeyManager(options.c, line)			
-				if(km) { throw new ReadException(null) } else { println "Wrong password, try again" }
-			}
-		} catch (ReadException re) {/* do nothing */}
-		
-		SimpleFileClient sfc = new SimpleFileClient(km)
+		SimpleFileClient sfc = makeClient(options)
 		println "Connecting..."
 		sfc.connectClient(options.s, options.p as Integer)
 		
 		println "Uploading ${options.arguments().size()} files: ${options.arguments()}"
 		
 		sfc.uploadFiles(options.d, options.arguments())		
-		sfc.pollForResponses(options.d, options.arguments())
+		sfc.pollForResponses(options.d, options.arguments().first() )
 		
 		sfc.disconnect()
+	}
+	
+	static SimpleFileClient makeClient(options){
+		if(options.c){
+			println "Please input password for ${options.c}"
+			KeyManager km = null
+			try{
+				System.in.eachLine{ line ->
+					km = initKeyManager(options.c, line)
+					if(km) { throw new ReadException(null) } else { println "Wrong password, try again" }
+				}
+			} catch (ReadException re) {/* do nothing */}
+		
+			return new SimpleFileClient(km)
+		} else {
+			return new SimpleFileClient()
+		}
 	}
 
 }
