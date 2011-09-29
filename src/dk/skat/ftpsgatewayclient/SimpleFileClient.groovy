@@ -1,6 +1,5 @@
 package dk.skat.ftpsgateway
 
-
 import java.security.KeyStore;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
@@ -12,11 +11,11 @@ import org.apache.commons.net.ftp.FTPSClient;
 import org.apache.commons.net.ftp.FTPReply;
 import org.codehaus.groovy.syntax.ReadException;
 
-
-
 class SimpleFileClient {
 	
 	FTPClient ftp
+	Integer timeout
+	PrintWriter out = new PrintWriter(System.out);
 	
 	public SimpleFileClient() {
 		ftp = new FTPClient()		
@@ -24,9 +23,14 @@ class SimpleFileClient {
 	}
 	
 	public SimpleFileClient(keyManager) {
+		 this(keyManager, System.out)		
+	}
+	
+	public SimpleFileClient(keyManager, PrintWriter out) {
 		ftp = new FTPSClient()
+		this.out = out;
 		ftp.setKeyManager keyManager
-		ftp.addProtocolCommandListener(new PrintCommandListener(new PrintWriter(System.out)));		
+		ftp.addProtocolCommandListener( new PrintCommandListener(out) );
 	}
 
 	private static KeyManager initKeyManager(fileName, password){
@@ -49,22 +53,21 @@ class SimpleFileClient {
 			try {
 				ftp.disconnect();
 			}
-			catch (IOException f) {
-				// do nothing
+			catch (IOException f) {	
+				// do nothing				
 			}
 		}
 	}
 	
 	
 	def connectClient(host, port){		
-		ftp.connect(host, port);		
+		ftp.connect(host, port);
 	
 		int reply = ftp.getReplyCode();
 	
-	
 		if (!FTPReply.isPositiveCompletion(reply)) {
 			ftp.disconnect();
-			System.err.println("FTP server refused connection.");
+			out.println("FTP server refused connection.");
 			System.exit(1);
 		}
 	
@@ -72,7 +75,7 @@ class SimpleFileClient {
 			ftp.logout();
 		}
 	
-		System.out.println("Remote system is " + ftp.getSystemName());	
+		out.println("Remote system is " + ftp.getSystemName());	
 	
 		// Use passive mode as default because most of us are behind firewalls these days.
 		ftp.enterLocalPassiveMode();
@@ -89,25 +92,37 @@ class SimpleFileClient {
 		}
 	}
 	
-	def pollForResponses(remoteDir, fileName){
+	def pollForResponses(remoteDir, localDir, fileName){
 		ftp.changeToParentDirectory()
 		ftp.changeToParentDirectory()
-		println "PWD: " + ftp.printWorkingDirectory()
-		println "Dirs: " + ftp.listNames()
 		ftp.changeWorkingDirectory("out")
 		
-		while(fileName != null){
+		Long waitedTime = 0		
+		
+		while( waitedTime < timeout ){
+			Thread.sleep(5000)
+			waitedTime += 5000
+			
 			ftp.listNames().each{ fName ->
 				String targetName = remoteDir + "_" + fileName + ".response"
-				println "fName $fName - targetName $targetName"
+				out.println "Looking at: $fName - Looking for: $targetName"
 				if(fName == targetName){
 					println "Downloading!"
-					ftp.retrieveFile(fName, new FileOutputStream(fName))
-					fileName = null
+					ftp.retrieveFile(fName, new FileOutputStream(localDir + File.separator + fName))
+					ftp.deleteFile(fName)
+					waitedTime = timeout
 				} 
 			}
-			Thread.sleep(5000)
 		}
+		
+		ftp.listNames().each{ fName ->
+			String targetName = "status" + "_" + remoteDir + "_" + fileName
+			out.println "Looking at: $fName - Looking for: $targetName"
+			if(fName.startsWith( targetName ) ){				
+				ftp.retrieveFile(fName, new FileOutputStream(localDir + File.separator + fName))
+				ftp.deleteFile(fName)				
+			}
+		}		
 	}
 	
 
@@ -140,7 +155,7 @@ class SimpleFileClient {
 		println "Uploading ${options.arguments().size()} files: ${options.arguments()}"
 		
 		sfc.uploadFiles(options.d, options.arguments())		
-		sfc.pollForResponses(options.d, options.arguments().first() )
+		sfc.pollForResponses(options.d, ".", options.arguments().first() )
 		
 		sfc.disconnect()
 	}
@@ -161,5 +176,4 @@ class SimpleFileClient {
 			return new SimpleFileClient()
 		}
 	}
-
 }
